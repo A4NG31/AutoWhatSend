@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
-import pywhatkit as kit
 import time
 import re
 from io import BytesIO
-import traceback
+import urllib.parse
 
 # Configuración de la página
 st.set_page_config(
@@ -22,12 +21,10 @@ if 'numbers_validated' not in st.session_state:
     st.session_state.numbers_validated = False
 if 'message_ready' not in st.session_state:
     st.session_state.message_ready = False
-if 'sending_complete' not in st.session_state:
-    st.session_state.sending_complete = False
-if 'failed_numbers' not in st.session_state:
-    st.session_state.failed_numbers = []
-if 'successful_numbers' not in st.session_state:
-    st.session_state.successful_numbers = []
+if 'urls_generated' not in st.session_state:
+    st.session_state.urls_generated = False
+if 'whatsapp_urls' not in st.session_state:
+    st.session_state.whatsapp_urls = []
 
 def validate_colombian_number(number):
     """Valida que el número sea un número colombiano válido"""
@@ -45,7 +42,12 @@ def validate_colombian_number(number):
 
 def format_number_for_whatsapp(number):
     """Formatea el número para WhatsApp con código de país de Colombia"""
-    return f"+57{number}"
+    return f"57{number}"  # Sin el + para URLs
+
+def generate_whatsapp_url(number, message):
+    """Genera URL de WhatsApp Web"""
+    encoded_message = urllib.parse.quote(message)
+    return f"https://wa.me/{number}?text={encoded_message}"
 
 def create_excel_download(data, filename):
     """Crea un archivo Excel para descarga"""
@@ -56,9 +58,50 @@ def create_excel_download(data, filename):
     processed_data = output.getvalue()
     return processed_data
 
+def create_whatsapp_links_html(urls_data):
+    """Crea HTML con enlaces de WhatsApp"""
+    html = """
+    <style>
+    .whatsapp-link {
+        display: inline-block;
+        background-color: #25D366;
+        color: white;
+        padding: 10px 15px;
+        margin: 5px;
+        text-decoration: none;
+        border-radius: 25px;
+        font-weight: bold;
+        transition: all 0.3s;
+    }
+    .whatsapp-link:hover {
+        background-color: #128C7E;
+        transform: scale(1.05);
+    }
+    .contact-info {
+        background-color: #f0f2f6;
+        padding: 10px;
+        margin: 5px;
+        border-radius: 10px;
+        border-left: 4px solid #25D366;
+    }
+    </style>
+    """
+    
+    for i, data in enumerate(urls_data):
+        html += f"""
+        <div class="contact-info">
+            <strong>Contacto {i+1}:</strong> {data['display_info']}<br>
+            <a href="{data['url']}" target="_blank" class="whatsapp-link">
+                📱 Enviar por WhatsApp
+            </a>
+        </div>
+        """
+    
+    return html
+
 # Título principal
 st.title("📱 AutoWhatSend")
-st.markdown("*Envío masivo de mensajes de WhatsApp automatizado*")
+st.markdown("*Generador de enlaces de WhatsApp para envío masivo personalizado*")
 st.markdown("---")
 
 # Paso 1: Cargar archivo
@@ -153,7 +196,7 @@ if st.session_state.get('column_selected', False):
         st.info("💡 **Formato correcto:** Los números deben tener 10 dígitos y empezar con 3 (ej: 3008686725)")
     
     if valid_numbers:
-        st.success(f"🎉 {len(valid_numbers)} números están listos para envío")
+        st.success(f"🎉 {len(valid_numbers)} números están listos para generar enlaces")
         
         # Mostrar muestra de números válidos
         if st.checkbox("Ver muestra de números válidos"):
@@ -165,7 +208,7 @@ if st.session_state.get('column_selected', False):
         with col1:
             if st.button("🔄 Cargar Nueva Base", type="secondary"):
                 # Reiniciar estados
-                for key in ['df', 'column_selected', 'numbers_validated', 'message_ready', 'sending_complete']:
+                for key in ['df', 'column_selected', 'numbers_validated', 'message_ready', 'urls_generated']:
                     if key in st.session_state:
                         del st.session_state[key]
                 st.rerun()
@@ -246,15 +289,15 @@ Quedo atenta a la fecha que elija."""
         st.success("✅ Mensaje configurado correctamente")
         st.rerun()
 
-# Paso 5: Enviar mensajes
+# Paso 5: Generar enlaces de WhatsApp
 if st.session_state.get('message_ready', False):
     st.markdown("---")
-    st.header("5️⃣ Enviar Mensajes")
+    st.header("5️⃣ Generar Enlaces de WhatsApp")
     
     total_messages = len(st.session_state.valid_numbers)
-    st.info(f"📊 Se enviarán mensajes a **{total_messages}** números válidos")
+    st.info(f"📊 Se generarán enlaces para **{total_messages}** números válidos")
     
-    if st.button("🚀 Iniciar Envío de Mensajes", type="primary"):
+    if st.button("🔗 Generar Enlaces de WhatsApp", type="primary"):
         df = st.session_state.df
         valid_numbers = st.session_state.valid_numbers
         message_template = st.session_state.message_template
@@ -263,8 +306,7 @@ if st.session_state.get('message_ready', False):
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        successful_numbers = []
-        failed_numbers = []
+        whatsapp_urls = []
         
         for i, number_info in enumerate(valid_numbers):
             try:
@@ -278,139 +320,157 @@ if st.session_state.get('message_ready', False):
                     value = str(row_data[col]) if pd.notna(row_data[col]) else ""
                     personalized_message = personalized_message.replace(f"{{{col}}}", value)
                 
-                # Calcular tiempo para envío (ahora + 1 minuto por mensaje)
-                current_time = time.localtime()
-                minutes_offset = i + 1
-                target_minute = (current_time.tm_min + minutes_offset) % 60
-                target_hour = (current_time.tm_hour + (current_time.tm_min + minutes_offset) // 60) % 24
-                
-                # Enviar mensaje
+                # Generar URL de WhatsApp
                 whatsapp_number = number_info['whatsapp']
-                kit.sendwhatmsg(whatsapp_number, personalized_message, target_hour, target_minute)
+                url = generate_whatsapp_url(whatsapp_number, personalized_message)
                 
-                successful_numbers.append({
-                    'numero': whatsapp_number,
-                    'indice': row_index,
-                    'estado': 'Enviado'
+                # Crear información para mostrar
+                display_info = f"+57{number_info['clean']}"
+                if 'NOMBRE' in df.columns and pd.notna(row_data.get('NOMBRE')):
+                    display_info += f" - {row_data['NOMBRE']}"
+                if 'EMPRESA' in df.columns and pd.notna(row_data.get('EMPRESA')):
+                    display_info += f" ({row_data['EMPRESA']})"
+                
+                whatsapp_urls.append({
+                    'numero': f"+57{number_info['clean']}",
+                    'url': url,
+                    'mensaje': personalized_message,
+                    'display_info': display_info
                 })
                 
                 # Actualizar progreso
                 progress = (i + 1) / total_messages
                 progress_bar.progress(progress)
-                status_text.text(f"Enviando mensaje {i + 1} de {total_messages} - {whatsapp_number}")
-                
-                # Pausa entre mensajes
-                time.sleep(15)
+                status_text.text(f"Generando enlace {i + 1} de {total_messages}")
                 
             except Exception as e:
-                failed_numbers.append({
-                    'numero': number_info['whatsapp'],
-                    'indice': number_info['index'],
-                    'error': str(e)
-                })
-                
-                # Continuar con el siguiente
-                progress = (i + 1) / total_messages
-                progress_bar.progress(progress)
-                status_text.text(f"Error en mensaje {i + 1} - Continuando...")
+                st.error(f"Error generando enlace para {number_info['whatsapp']}: {str(e)}")
         
         # Guardar resultados en session state
-        st.session_state.successful_numbers = successful_numbers
-        st.session_state.failed_numbers = failed_numbers
-        st.session_state.sending_complete = True
+        st.session_state.whatsapp_urls = whatsapp_urls
+        st.session_state.urls_generated = True
         
-        st.success("🎉 **¡Envío completado!**")
+        st.success("🎉 **¡Enlaces generados exitosamente!**")
         st.rerun()
 
-# Paso 6: Resultados y reporte
-if st.session_state.get('sending_complete', False):
+# Paso 6: Mostrar enlaces y opciones de envío
+if st.session_state.get('urls_generated', False):
     st.markdown("---")
-    st.header("6️⃣ Resultados del Envío")
+    st.header("6️⃣ Enlaces de WhatsApp Generados")
     
-    successful_count = len(st.session_state.successful_numbers)
-    failed_count = len(st.session_state.failed_numbers)
-    total_count = successful_count + failed_count
+    urls_count = len(st.session_state.whatsapp_urls)
+    st.success(f"✅ Se generaron {urls_count} enlaces de WhatsApp")
     
-    # Mostrar métricas
-    col1, col2, col3 = st.columns(3)
+    # Opciones de visualización
+    tab1, tab2, tab3 = st.tabs(["🔗 Enlaces Interactivos", "📋 Lista Completa", "📊 Descargar Datos"])
     
-    with col1:
-        st.metric("✅ Envíos Exitosos", successful_count)
+    with tab1:
+        st.markdown("### Enlaces Interactivos")
+        st.info("💡 **Instrucciones:** Haz clic en cada botón verde para abrir WhatsApp Web con el mensaje prellenado. Se abrirá en una nueva pestaña.")
         
-    with col2:
-        st.metric("❌ Envíos Fallidos", failed_count)
+        # Mostrar enlaces interactivos (primeros 10)
+        display_count = min(10, len(st.session_state.whatsapp_urls))
         
-    with col3:
-        success_rate = (successful_count / total_count * 100) if total_count > 0 else 0
-        st.metric("📊 Tasa de Éxito", f"{success_rate:.1f}%")
+        if len(st.session_state.whatsapp_urls) > 10:
+            st.warning(f"⚠️ Mostrando los primeros {display_count} enlaces. Ve a la pestaña 'Lista Completa' para ver todos.")
+        
+        # Generar HTML con enlaces
+        html_links = create_whatsapp_links_html(st.session_state.whatsapp_urls[:display_count])
+        st.markdown(html_links, unsafe_allow_html=True)
+        
+        # Botón para mostrar todos
+        if len(st.session_state.whatsapp_urls) > 10:
+            if st.button("📱 Mostrar Todos los Enlaces"):
+                html_all_links = create_whatsapp_links_html(st.session_state.whatsapp_urls)
+                st.markdown(html_all_links, unsafe_allow_html=True)
     
-    # Botones de acción
-    col1, col2, col3 = st.columns(3)
+    with tab2:
+        st.markdown("### Lista Completa de Enlaces")
+        
+        # Crear DataFrame para mostrar
+        display_data = []
+        for i, data in enumerate(st.session_state.whatsapp_urls):
+            display_data.append({
+                'N°': i + 1,
+                'Número': data['numero'],
+                'Información': data['display_info'],
+                'URL': data['url'][:50] + '...' if len(data['url']) > 50 else data['url']
+            })
+        
+        display_df = pd.DataFrame(display_data)
+        st.dataframe(display_df, use_container_width=True)
+        
+        # Copiar todas las URLs
+        all_urls = '\n'.join([data['url'] for data in st.session_state.whatsapp_urls])
+        st.text_area("📋 Todas las URLs (para copiar):", all_urls, height=200)
     
-    with col1:
-        if st.button("🔄 Enviar Nuevos Mensajes"):
-            # Reiniciar para nuevo envío
-            keys_to_reset = ['df', 'column_selected', 'numbers_validated', 'message_ready', 'sending_complete']
-            for key in keys_to_reset:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.rerun()
+    with tab3:
+        st.markdown("### Descargar Datos")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Excel con URLs
+            excel_data_urls = pd.DataFrame(st.session_state.whatsapp_urls)
+            excel_urls = create_excel_download(excel_data_urls, "enlaces_whatsapp.xlsx")
+            
+            st.download_button(
+                label="📥 Descargar Enlaces (Excel)",
+                data=excel_urls,
+                file_name="enlaces_whatsapp.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        
+        with col2:
+            # TXT con URLs
+            urls_text = '\n'.join([f"{data['display_info']}: {data['url']}" for data in st.session_state.whatsapp_urls])
+            
+            st.download_button(
+                label="📝 Descargar URLs (TXT)",
+                data=urls_text,
+                file_name="enlaces_whatsapp.txt",
+                mime="text/plain"
+            )
     
-    with col2:
-        if failed_count > 0:
-            if st.button("📋 Ver Números Fallidos"):
-                st.subheader("📋 Reporte de Números Fallidos")
-                failed_df = pd.DataFrame(st.session_state.failed_numbers)
-                st.dataframe(failed_df, use_container_width=True)
-                
-                # Opción de descarga
-                excel_data = create_excel_download(failed_df, "numeros_fallidos.xlsx")
-                st.download_button(
-                    label="📥 Descargar Números Fallidos (Excel)",
-                    data=excel_data,
-                    file_name="numeros_fallidos.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-    
-    with col3:
-        if successful_count > 0:
-            if st.button("📈 Ver Números Exitosos"):
-                st.subheader("📈 Reporte de Números Exitosos")
-                success_df = pd.DataFrame(st.session_state.successful_numbers)
-                st.dataframe(success_df, use_container_width=True)
-                
-                # Opción de descarga
-                excel_data = create_excel_download(success_df, "numeros_exitosos.xlsx")
-                st.download_button(
-                    label="📥 Descargar Números Exitosos (Excel)",
-                    data=excel_data,
-                    file_name="numeros_exitosos.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+    # Botón para nuevo proceso
+    st.markdown("---")
+    if st.button("🔄 Generar Nuevos Enlaces", type="secondary"):
+        # Reiniciar para nuevo envío
+        keys_to_reset = ['df', 'column_selected', 'numbers_validated', 'message_ready', 'urls_generated']
+        for key in keys_to_reset:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
 
 # Sidebar con información
 st.sidebar.header("ℹ️ AutoWhatSend - Información")
 st.sidebar.markdown("""
-### 📋 Pasos del proceso:
+### 📋 Cómo funciona:
 1. **Cargar Base de Datos** - Sube tu archivo Excel
 2. **Seleccionar Columna** - Elige la columna con números
 3. **Validar Números** - Verifica formato colombiano
 4. **Personalizar Mensaje** - Crea tu mensaje personalizado
-5. **Enviar Mensajes** - Inicia el envío masivo
-6. **Ver Resultados** - Revisa el reporte de envío
+5. **Generar Enlaces** - Crea enlaces de WhatsApp
+6. **Enviar Mensajes** - Usa los enlaces generados
 
 ### 📞 Formato de números:
-- ✅ Correcto: 300xxxxx25
-- ❌ Incorrecto: 0xxxxx25, +57300xxxxx25
+- ✅ Correcto: 3008686725
+- ❌ Incorrecto: 08686725, +573008686725
 
 ### 🔧 Variables de personalización:
 Usa el nombre de la columna entre llaves:
 - `{NOMBRE}` - Para nombre
 - `{EMPRESA}` - Para empresa
 - `{CIUDAD}` - Para ciudad
+
+### 💡 Ventajas de este método:
+- ✅ Funciona en cualquier dispositivo
+- ✅ No requiere instalaciones adicionales
+- ✅ Mayor control sobre cada envío
+- ✅ Compatible con Streamlit Cloud
 """)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("💡 **Tip:** Guarda una copia de tu base de datos antes de comenzar")
+st.sidebar.markdown("💡 **Tip:** Los enlaces se abren en WhatsApp Web automáticamente")
 st.sidebar.markdown("---")
-st.sidebar.markdown("🚀 **AutoWhatSend v1.0** - Automatización inteligente de WhatsApp")
+st.sidebar.markdown("🚀 **AutoWhatSend v2.0** - Generador de enlaces inteligente")

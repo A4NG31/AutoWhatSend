@@ -114,6 +114,12 @@ def create_html_with_auto_click(urls_data):
                 border-radius: 10px;
                 margin: 20px 0;
             }
+            .timer {
+                font-size: 18px;
+                font-weight: bold;
+                color: #25D366;
+                margin: 10px 0;
+            }
             h1 {
                 text-align: center;
                 font-size: 2.5em;
@@ -129,23 +135,33 @@ def create_html_with_auto_click(urls_data):
             <div class="instructions">
                 <h3>🚀 Instrucciones para Envío Automático:</h3>
                 <ol>
-                    <li>Haz clic en cada botón verde</li>
-                    <li>Se abrirá WhatsApp Web en nueva pestaña</li>
+                    <li>Haz clic en el botón "Iniciar Envío Automático"</li>
+                    <li>Se abrirá WhatsApp Web en nueva pestaña cada 15 segundos</li>
                     <li>El mensaje estará pre-escrito</li>
                     <li>Solo debes hacer clic en <strong>ENVIAR</strong> manualmente</li>
-                    <li>Espera 3 segundos entre cada envío</li>
+                    <li>El timer mostrará el progreso</li>
                 </ol>
                 <p><strong>💡 Tip:</strong> Mantén WhatsApp Web abierto y logueado</p>
+            </div>
+            
+            <div id="progress" style="text-align: center; margin: 30px 0;">
+                <h3>Progreso: <span id="current">0</span> / <span id="total">""" + str(len(urls_data)) + """</span></h3>
+                <div class="timer">Próximo envío en: <span id="timer">15</span> segundos</div>
+            </div>
+            
+            <div style="text-align: center;">
+                <button onclick="startSending()" style="background:#25D366; color:white; border:none; padding:15px 30px; border-radius:25px; font-size:18px; font-weight:bold; cursor:pointer;">
+                    🚀 Iniciar Envío Automático
+                </button>
             </div>
     """
     
     for i, data in enumerate(urls_data):
         html_content += f"""
-            <div class="contact-info">
+            <div class="contact-info" id="contact-{i+1}" style="display: none;">
                 <strong>👤 Contacto {i+1}:</strong> {data['display_info']}<br>
                 <strong>💬 Mensaje:</strong> {data['mensaje'][:100]}...<br><br>
-                <a href="{data['url']}" target="_blank" class="whatsapp-link" 
-                   onclick="setTimeout(function(){{ window.open('{data['url']}', '_blank'); }}, {i * 3000}); return false;">
+                <a href="{data['url']}" target="_blank" class="whatsapp-link">
                     📱 Enviar a {data['display_info'].split(' - ')[0] if ' - ' in data['display_info'] else data['display_info']}
                 </a>
             </div>
@@ -155,11 +171,56 @@ def create_html_with_auto_click(urls_data):
         </div>
         
         <script>
-            // Función para abrir enlaces con delay
-            function openWithDelay(url, delay) {
-                setTimeout(function() {
-                    window.open(url, '_blank');
-                }, delay);
+            const totalContacts = """ + str(len(urls_data)) + """;
+            let currentContact = 0;
+            let timerInterval;
+            
+            function startSending() {
+                if (currentContact < totalContacts) {
+                    sendNext();
+                }
+            }
+            
+            function sendNext() {
+                if (currentContact > 0) {
+                    // Ocultar contacto anterior
+                    document.getElementById('contact-' + currentContact).style.display = 'none';
+                }
+                
+                currentContact++;
+                document.getElementById('current').textContent = currentContact;
+                
+                // Mostrar contacto actual
+                const currentElement = document.getElementById('contact-' + currentContact);
+                if (currentElement) {
+                    currentElement.style.display = 'block';
+                    
+                    // Abrir enlace automáticamente
+                    const link = currentElement.querySelector('.whatsapp-link');
+                    if (link) {
+                        window.open(link.href, '_blank');
+                    }
+                }
+                
+                // Iniciar timer para próximo envío
+                if (currentContact < totalContacts) {
+                    let seconds = 15;
+                    updateTimer(seconds);
+                    
+                    timerInterval = setInterval(function() {
+                        seconds--;
+                        updateTimer(seconds);
+                        
+                        if (seconds <= 0) {
+                            clearInterval(timerInterval);
+                            sendNext();
+                        }
+                    }, 1000);
+                }
+            }
+            
+            function updateTimer(seconds) {
+                document.getElementById('timer').textContent = seconds;
             }
         </script>
     </body>
@@ -168,8 +229,8 @@ def create_html_with_auto_click(urls_data):
     
     return html_content
 
-def create_javascript_opener(urls, delay=3):
-    """Crea código JavaScript para abrir URLs con delay"""
+def create_javascript_opener(urls, delay=15):
+    """Crea código JavaScript para abrir URLs con delay de 15 segundos"""
     js_code = """
     <script>
         function openWhatsAppLinks() {
@@ -179,13 +240,18 @@ def create_javascript_opener(urls, delay=3):
         js_code += f"""
             setTimeout(function() {{
                 window.open('{url}', '_blank');
-                console.log('Abriendo enlace {i+1}');
+                console.log('Abriendo enlace {i+1} después de {i * delay} segundos');
             }}, {i * (delay * 1000)});
         """
     
     js_code += """
         }
-        openWhatsAppLinks();
+        
+        // Iniciar el proceso automáticamente
+        setTimeout(function() {
+            openWhatsAppLinks();
+            alert('🚀 Iniciando envío automático. Se abrirá una pestaña cada 15 segundos.');
+        }, 2000);
     </script>
     """
     
@@ -193,7 +259,7 @@ def create_javascript_opener(urls, delay=3):
 
 # Título principal
 st.title("📱 AutoWhatSend Gratis")
-st.markdown("🚀 **Envío Semi-Automático 100% Gratuito** - Abre WhatsApp automáticamente")
+st.markdown("🚀 **Envío Semi-Automático 100% Gratuito** - 15 segundos entre mensajes")
 st.markdown("---")
 
 # Paso 1: Cargar archivo
@@ -329,7 +395,9 @@ Quedo atenta a la fecha que elija."""
 
     message_template = st.text_area("Escribe tu mensaje:", value=default_message, height=300)
     
-    delay = st.slider("Tiempo entre mensajes (segundos):", min_value=2, max_value=10, value=3)
+    # Fixed delay of 15 seconds
+    delay = 15
+    st.info(f"⏰ **Delay fijo:** 15 segundos entre cada mensaje")
     
     st.subheader("👁️ Vista Previa del Mensaje")
     
@@ -358,6 +426,12 @@ if st.session_state.get('message_ready', False):
     
     total_messages = len(st.session_state.valid_numbers)
     st.info(f"📊 Preparando **{total_messages}** mensajes de WhatsApp")
+    st.warning(f"⏰ **Cada mensaje se abrirá cada 15 segundos**")
+    
+    # Calcular tiempo total estimado
+    total_time_seconds = total_messages * 15
+    total_time_minutes = total_time_seconds / 60
+    st.info(f"⏳ **Tiempo total estimado:** {total_time_minutes:.1f} minutos")
     
     # Preparar URLs de WhatsApp
     whatsapp_urls = []
@@ -397,19 +471,19 @@ if st.session_state.get('message_ready', False):
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("📤 Abrir Enlaces Automáticamente", type="primary", use_container_width=True):
-            # Crear JavaScript para abrir enlaces con delay
+        if st.button("📤 Iniciar Envío Automático (15s)", type="primary", use_container_width=True):
+            # Crear JavaScript para abrir enlaces con delay de 15 segundos
             urls = [item['url'] for item in whatsapp_urls]
-            js_code = create_javascript_opener(urls, st.session_state.delay)
+            js_code = create_javascript_opener(urls, 15)
             st.components.v1.html(js_code, height=0)
             
-            st.success("🚀 ¡Enlaces se están abriendo automáticamente!")
+            st.success("🚀 ¡Envío automático iniciado!")
             st.info("""
             **📋 Qué está pasando:**
-            - Se están abriendo pestañas de WhatsApp automáticamente
-            - Cada 3 segundos se abre una nueva pestaña
+            - Se abrirá una pestaña de WhatsApp cada **15 segundos**
             - El mensaje ya está pre-escrito
             - Solo debes hacer clic en **ENVIAR** manualmente
+            - El proceso continuará automáticamente
             """)
     
     with col2:
@@ -418,23 +492,25 @@ if st.session_state.get('message_ready', False):
         b64 = base64.b64encode(html_content.encode()).decode()
         href = f'<a href="data:text/html;base64,{b64}" download="whatsapp_auto_send.html" style="display:inline-block; background:#25D366; color:white; padding:15px 25px; border-radius:30px; text-decoration:none; font-weight:bold; text-align:center;">📥 Descargar HTML Automático</a>'
         st.markdown(href, unsafe_allow_html=True)
-        st.caption("Descarga este archivo y ábrelo en tu navegador para envío automático")
+        st.caption("Descarga este archivo y ábrelo en tu navegador para envío automático con timer")
 
 # Sidebar informativo
 st.sidebar.header("ℹ️ AutoWhatSend Gratis")
 st.sidebar.markdown("""
 ### 🚀 Cómo funciona:
 
+**⏰ Delay de 15 segundos** entre cada mensaje
+
 **Método 1: Envío Directo**
-- Haz clic en "Abrir Enlaces Automáticamente"
-- Se abrirán pestañas automáticamente
+- Haz clic en "Iniciar Envío Automático"
+- Se abrirán pestañas cada **15 segundos**
 - Solo debes hacer clic en **ENVIAR**
 
 **Método 2: HTML Descargable**
 - Descarga el archivo HTML
 - Ábrelo en tu navegador
-- Haz clic en los botones verdes
-- Se abrirán con delay automático
+- Haz clic en "Iniciar Envío Automático"
+- Timer integrado de 15 segundos
 
 ### ⚠️ Requisitos:
 - WhatsApp Web abierto y logueado
@@ -444,13 +520,13 @@ st.sidebar.markdown("""
 ### 💡 Tips:
 1. Abre WhatsApp Web primero
 2. Mantén la sesión activa
-3. Usa delay de 3-5 segundos
-4. revisa cada pestaña antes de enviar
+3. Usa el delay de 15 segundos
+4. Revisa cada mensaje antes de enviar
 """)
 
 st.sidebar.markdown("---")
 st.sidebar.success("**✅ 100% Gratuito** - Sin APIs costosas")
-st.sidebar.markdown("**🎯 Eficiente** - Semi-automático pero rápido")
+st.sidebar.info("**⏰ Delay:** 15 segundos entre mensajes")
 st.sidebar.markdown("**🌐 Compatible** - Funciona en Streamlit Cloud")
 
 # Footer
@@ -458,6 +534,7 @@ st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #666; margin-top: 50px;'>
     <p>🚀 <strong>AutoWhatSend Gratis</strong> - Envío semi-automático de WhatsApp</p>
+    <p>⏰ <strong>Delay:</strong> 15 segundos entre cada mensaje</p>
     <p>💡 Recuerda: Debes hacer clic en ENVIAR manualmente en cada pestaña</p>
 </div>
 """, unsafe_allow_html=True)

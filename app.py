@@ -6,12 +6,7 @@ from io import BytesIO
 import urllib.parse
 import webbrowser
 import threading
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
-import os
+import base64
 
 # Configuración de la página
 st.set_page_config(
@@ -35,8 +30,10 @@ if 'failed_numbers' not in st.session_state:
     st.session_state.failed_numbers = []
 if 'successful_numbers' not in st.session_state:
     st.session_state.successful_numbers = []
-if 'send_method' not in st.session_state:
-    st.session_state.send_method = "selenium"
+if 'current_sending_index' not in st.session_state:
+    st.session_state.current_sending_index = 0
+if 'sending_in_progress' not in st.session_state:
+    st.session_state.sending_in_progress = False
 
 def validate_colombian_number(number):
     """Valida que el número sea un número colombiano válido"""
@@ -70,70 +67,63 @@ def create_excel_download(data, filename):
     processed_data = output.getvalue()
     return processed_data
 
-def send_whatsapp_message_selenium(url, delay=5):
-    """Envía mensaje de WhatsApp usando Selenium"""
-    try:
-        # Configurar opciones de Chrome
-        options = webdriver.ChromeOptions()
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--user-data-dir=./User_Data')  # Para mantener sesión
-        
-        # Inicializar driver
-        driver = webdriver.Chrome(options=options)
-        driver.get(url)
-        
-        # Esperar a que cargue la página y el botón de enviar esté disponible
-        wait = WebDriverWait(driver, 30)
-        send_button = wait.until(
-            EC.element_to_be_clickable((By.XPATH, '//span[@data-icon="send"]'))
-        )
-        
-        # Hacer clic en enviar
-        time.sleep(2)  # Pequeña pausa adicional
-        send_button.click()
-        
-        # Esperar a que se envíe el mensaje
-        time.sleep(3)
-        
-        # Cerrar el navegador
-        driver.quit()
-        return True
-        
-    except Exception as e:
-        try:
-            driver.quit()
-        except:
-            pass
-        return False, str(e)
-
-def open_whatsapp_urls(urls, delay=10):
-    """Abre URLs de WhatsApp en el navegador con un delay entre cada una"""
-    successful = []
-    failed = []
+def create_html_download_link(urls_data, filename="whatsapp_links.html"):
+    """Crea un archivo HTML con enlaces para descargar"""
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Enlaces de WhatsApp</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .whatsapp-link { 
+                display: inline-block; 
+                background-color: #25D366; 
+                color: white; 
+                padding: 12px 20px; 
+                margin: 10px; 
+                text-decoration: none; 
+                border-radius: 25px; 
+                font-weight: bold; 
+                transition: all 0.3s; 
+            }
+            .whatsapp-link:hover { 
+                background-color: #128C7E; 
+                transform: scale(1.05); 
+            }
+            .contact-info { 
+                background-color: #f0f2f6; 
+                padding: 15px; 
+                margin: 10px; 
+                border-radius: 10px; 
+                border-left: 4px solid #25D366; 
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Enlaces de WhatsApp</h1>
+    """
     
-    for i, url_info in enumerate(urls):
-        try:
-            # Abrir en nueva pestaña
-            webbrowser.open_new_tab(url_info['url'])
-            
-            # Esperar antes de abrir la siguiente
-            if i < len(urls) - 1:
-                time.sleep(delay)
-                
-            successful.append(url_info)
-            
-        except Exception as e:
-            failed.append({
-                'info': url_info,
-                'error': str(e)
-            })
+    for i, data in enumerate(urls_data):
+        html_content += f"""
+        <div class="contact-info">
+            <strong>Contacto {i+1}:</strong> {data['display_info']}<br>
+            <a href="{data['url']}" target="_blank" class="whatsapp-link">
+                📱 Abrir en WhatsApp
+            </a>
+        </div>
+        """
     
-    return successful, failed
+    html_content += """
+    </body>
+    </html>
+    """
+    
+    return html_content
 
 # Título principal
 st.title("📱 AutoWhatSend")
-st.markdown("🚀 **Envío Automático de WhatsApp** - Los mensajes se enviarán automáticamente")
+st.markdown("🚀 **Envío Semi-Automático de WhatsApp** - Abre automáticamente los enlaces de WhatsApp")
 st.markdown("---")
 
 # Paso 1: Cargar archivo
@@ -228,7 +218,7 @@ if st.session_state.get('column_selected', False):
         st.info("💡 **Formato correcto:** Los números deben tener 10 dígitos y empezar con 3 (ej: 3008686725)")
     
     if valid_numbers:
-        st.success(f"🎉 {len(valid_numbers)} números están listos para envío automático")
+        st.success(f"🎉 {len(valid_numbers)} números están listos para envío")
         
         # Mostrar muestra de números válidos
         if st.checkbox("Ver muestra de números válidos"):
@@ -294,11 +284,11 @@ Quedo atenta a la fecha que elija."""
     
     # Configurar delay entre mensajes
     delay = st.slider(
-        "Tiempo entre mensajes (segundos):",
+        "Tiempo sugerido entre mensajes (segundos):",
         min_value=5,
         max_value=60,
         value=15,
-        help="Tiempo de espera entre el envío de cada mensaje"
+        help="Tiempo recomendado entre el envío de cada mensaje"
     )
     
     # Vista previa del mensaje
@@ -332,181 +322,122 @@ Quedo atenta a la fecha que elija."""
         st.success("✅ Mensaje configurado correctamente")
         st.rerun()
 
-# Paso 5: Envío automático de mensajes
+# Paso 5: Preparar envío de mensajes
 if st.session_state.get('message_ready', False):
     st.markdown("---")
-    st.header("5️⃣ Envío Automático de Mensajes")
+    st.header("5️⃣ Preparar Envío de Mensajes")
     
     total_messages = len(st.session_state.valid_numbers)
-    st.info(f"📊 Se enviarán mensajes automáticamente a **{total_messages}** números válidos")
+    st.info(f"📊 Se prepararán enlaces para **{total_messages}** números válidos")
     
-    st.warning("""
-    ⚠️ **Importante:** 
-    - Asegúrate de tener WhatsApp Web abierto en tu navegador
-    - Debes haber iniciado sesión previamente en WhatsApp Web
-    - No cierres el navegador durante el proceso
-    - El proceso se ejecutará en segundo plano
-    """)
+    # Preparar URLs
+    whatsapp_urls = []
+    df = st.session_state.df
     
-    if st.button("🚀 Iniciar Envío Automático", type="primary"):
-        df = st.session_state.df
-        valid_numbers = st.session_state.valid_numbers
-        message_template = st.session_state.message_template
-        delay = st.session_state.delay
-        
-        # Preparar URLs
-        whatsapp_urls = []
-        
-        for number_info in valid_numbers:
-            try:
-                # Obtener datos de la fila
-                row_index = number_info['index']
-                row_data = df.iloc[row_index]
-                
-                # Preparar mensaje personalizado
-                personalized_message = message_template
-                for col in df.columns:
-                    value = str(row_data[col]) if pd.notna(row_data[col]) else ""
-                    personalized_message = personalized_message.replace(f"{{{col}}}", value)
-                
-                # Generar URL de WhatsApp
-                url_number = number_info['url_format']
-                url = generate_whatsapp_url(url_number, personalized_message)
-                
-                # Crear información para mostrar
-                display_info = f"+57{number_info['clean']}"
-                if 'NOMBRE' in df.columns and pd.notna(row_data.get('NOMBRE')):
-                    display_info += f" - {row_data['NOMBRE']}"
-                if 'EMPRESA' in df.columns and pd.notna(row_data.get('EMPRESA')):
-                    display_info += f" ({row_data['EMPRESA']})"
-                
-                whatsapp_urls.append({
-                    'numero': f"+57{number_info['clean']}",
-                    'url': url,
-                    'mensaje': personalized_message,
-                    'display_info': display_info
-                })
-                
-            except Exception as e:
-                st.error(f"Error preparando mensaje para {number_info['clean']}: {str(e)}")
-        
-        # Iniciar envío en un hilo separado
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        def send_messages_thread():
-            successful = []
-            failed = []
+    for number_info in st.session_state.valid_numbers:
+        try:
+            # Obtener datos de la fila
+            row_index = number_info['index']
+            row_data = df.iloc[row_index]
             
-            for i, url_info in enumerate(whatsapp_urls):
-                try:
-                    # Abrir URL en navegador
-                    webbrowser.open_new_tab(url_info['url'])
-                    
-                    # Actualizar UI
-                    progress = (i + 1) / len(whatsapp_urls)
-                    status_text.text(f"📤 Enviando mensaje {i + 1} de {len(whatsapp_urls)} - {url_info['numero']}")
-                    
-                    # Esperar antes de enviar el siguiente
-                    if i < len(whatsapp_urls) - 1:
-                        time.sleep(delay)
-                    
-                    successful.append(url_info)
-                    
-                except Exception as e:
-                    failed.append({
-                        'info': url_info,
-                        'error': str(e)
-                    })
+            # Preparar mensaje personalizado
+            personalized_message = st.session_state.message_template
+            for col in df.columns:
+                value = str(row_data[col]) if pd.notna(row_data[col]) else ""
+                personalized_message = personalized_message.replace(f"{{{col}}}", value)
             
-            # Guardar resultados
-            st.session_state.successful_numbers = successful
-            st.session_state.failed_numbers = failed
-            st.session_state.sending_complete = True
+            # Generar URL de WhatsApp
+            url_number = number_info['url_format']
+            url = generate_whatsapp_url(url_number, personalized_message)
             
-            # Actualizar UI final
-            status_text.text(f"🎉 ¡Envío completado! {len(successful)} exitosos, {len(failed)} fallidos")
-            progress_bar.progress(1.0)
+            # Crear información para mostrar
+            display_info = f"+57{number_info['clean']}"
+            if 'NOMBRE' in df.columns and pd.notna(row_data.get('NOMBRE')):
+                display_info += f" - {row_data['NOMBRE']}"
+            if 'EMPRESA' in df.columns and pd.notna(row_data.get('EMPRESA')):
+                display_info += f" ({row_data['EMPRESA']})"
             
-            # Forzar rerun para mostrar resultados
-            st.rerun()
-        
-        # Iniciar el hilo
-        thread = threading.Thread(target=send_messages_thread)
-        thread.start()
-        
-        st.info("🔄 El envío se está realizando en segundo plano. Puedes continuar usando la aplicación.")
-
-# Paso 6: Resultados del envío
-if st.session_state.get('sending_complete', False):
-    st.markdown("---")
-    st.header("6️⃣ Resultados del Envío")
+            whatsapp_urls.append({
+                'numero': f"+57{number_info['clean']}",
+                'url': url,
+                'mensaje': personalized_message,
+                'display_info': display_info
+            })
+            
+        except Exception as e:
+            st.error(f"Error preparando mensaje para {number_info['clean']}: {str(e)}")
     
-    successful_count = len(st.session_state.successful_numbers)
-    failed_count = len(st.session_state.failed_numbers)
-    total_count = successful_count + failed_count
+    st.session_state.whatsapp_urls = whatsapp_urls
     
-    # Mostrar métricas
-    col1, col2, col3 = st.columns(3)
+    # Mostrar opciones de envío
+    st.subheader("🚀 Opciones de Envío")
     
-    with col1:
-        st.metric("✅ Envíos Exitosos", successful_count)
-        
-    with col2:
-        st.metric("❌ Envíos Fallidos", failed_count)
-        
-    with col3:
-        success_rate = (successful_count / total_count * 100) if total_count > 0 else 0
-        st.metric("📊 Tasa de Éxito", f"{success_rate:.1f}%")
-    
-    # Mostrar detalles
-    if successful_count > 0:
-        st.subheader("✅ Mensajes Enviados Exitosamente")
-        success_df = pd.DataFrame([{
-            'Número': info['numero'],
-            'Mensaje': info['mensaje'][:100] + '...' if len(info['mensaje']) > 100 else info['mensaje']
-        } for info in st.session_state.successful_numbers])
-        st.dataframe(success_df, use_container_width=True)
-    
-    if failed_count > 0:
-        st.subheader("❌ Mensajes Fallidos")
-        failed_df = pd.DataFrame([{
-            'Número': info['info']['numero'],
-            'Error': info['error'],
-            'Mensaje': info['info']['mensaje'][:100] + '...' if len(info['info']['mensaje']) > 100 else info['info']['mensaje']
-        } for info in st.session_state.failed_numbers])
-        st.dataframe(failed_df, use_container_width=True)
-    
-    # Botones de acción
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("🔄 Enviar Nuevos Mensajes", type="primary"):
-            # Reiniciar para nuevo envío
-            keys_to_reset = ['df', 'column_selected', 'numbers_validated', 'message_ready', 'sending_complete']
-            for key in keys_to_reset:
-                if key in st.session_state:
-                    del st.session_state[key]
+        if st.button("📤 Abrir Todos los Enlaces Automáticamente", type="primary"):
+            st.session_state.sending_in_progress = True
+            st.session_state.current_sending_index = 0
             st.rerun()
     
     with col2:
-        if failed_count > 0:
-            # Opción de descarga para números fallidos
-            excel_data = create_excel_download(
-                pd.DataFrame([{
-                    'Número': info['info']['numero'],
-                    'Error': info['error'],
-                    'Mensaje': info['info']['mensaje']
-                } for info in st.session_state.failed_numbers]),
-                "numeros_fallidos.xlsx"
-            )
-            
-            st.download_button(
-                label="📥 Descargar Números Fallidos",
-                data=excel_data,
-                file_name="numeros_fallidos.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        # Descargar HTML con enlaces
+        html_content = create_html_download_link(whatsapp_urls)
+        b64 = base64.b64encode(html_content.encode()).decode()
+        href = f'<a href="data:text/html;base64,{b64}" download="whatsapp_links.html">📥 Descargar Enlaces (HTML)</a>'
+        st.markdown(href, unsafe_allow_html=True)
+
+# Paso 6: Envío en progreso
+if st.session_state.get('sending_in_progress', False):
+    st.markdown("---")
+    st.header("6️⃣ Envío en Progreso")
+    
+    total_urls = len(st.session_state.whatsapp_urls)
+    current_index = st.session_state.current_sending_index
+    
+    if current_index < total_urls:
+        current_url = st.session_state.whatsapp_urls[current_index]
+        
+        st.info(f"📤 Abriendo enlace {current_index + 1} de {total_urls}")
+        st.write(f"**Número:** {current_url['numero']}")
+        st.write(f"**Mensaje:** {current_url['mensaje'][:100]}...")
+        
+        # Abrir el enlace
+        webbrowser.open_new_tab(current_url['url'])
+        
+        # Esperar antes del siguiente
+        time.sleep(st.session_state.delay)
+        
+        # Actualizar índice
+        st.session_state.current_sending_index += 1
+        st.rerun()
+    else:
+        st.session_state.sending_in_progress = False
+        st.session_state.sending_complete = True
+        st.rerun()
+
+# Paso 7: Resultados del envío
+if st.session_state.get('sending_complete', False):
+    st.markdown("---")
+    st.header("7️⃣ Envío Completado")
+    
+    st.success("🎉 ¡Todos los enlaces han sido abiertos!")
+    st.info("""
+    **📋 Instrucciones:**
+    1. WhatsApp Web se ha abierto en pestañas separadas
+    2. Debes hacer clic manualmente en "Enviar" en cada pestaña
+    3. Cierra cada pestaña después de enviar el mensaje
+    4. El proceso continúa automáticamente con el siguiente número
+    """)
+    
+    if st.button("🔄 Iniciar Nuevo Envío", type="primary"):
+        # Reiniciar estados
+        keys_to_reset = ['df', 'column_selected', 'numbers_validated', 'message_ready', 
+                        'sending_complete', 'sending_in_progress', 'current_sending_index']
+        for key in keys_to_reset:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
 
 # Sidebar con información
 st.sidebar.header("ℹ️ AutoWhatSend - Información")
@@ -516,8 +447,8 @@ st.sidebar.markdown("""
 2. **Seleccionar Columna** - Elige la columna con números
 3. **Validar Números** - Verifica formato colombiano
 4. **Personalizar Mensaje** - Crea tu mensaje personalizado
-5. **Envío Automático** - Los mensajes se enviarán automáticamente
-6. **Ver Resultados** - Revisa el reporte de envío
+5. **Abrir Enlaces** - Los enlaces se abren automáticamente
+6. **Enviar Manualmente** - Haz clic en enviar en cada pestaña
 
 ### 📞 Formato de números:
 - ✅ Correcto: 3008686725
@@ -529,11 +460,11 @@ Usa el nombre de la columna entre llaves:
 - `{EMPRESA}` - Para empresa
 - `{CIUDAD}` - Para ciudad
 
-### ⚠️ Requisitos:
+### ⚠️ Importante:
 - Debes tener WhatsApp Web abierto
-- Debes haber iniciado sesión previamente
-- No cierres el navegador durante el proceso
+- Debes hacer clic en "Enviar" manualmente
+- No cierres el navegador principal
 """)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("🚀 **AutoWhatSend v3.0** - Envío automático directo")
+st.sidebar.markdown("🚀 **AutoWhatSend v3.0** - Envío semi-automático")

@@ -193,7 +193,7 @@ if st.session_state.get('column_selected', False):
         invalid_df = pd.DataFrame(invalid_numbers)
         st.dataframe(invalid_df)
         
-        st.info("💡 **Formato correcto:** Los números deben tener 10 dígitos y empezar con 3 (ej: 3008686725)")
+        st.info("💡 **Formato correcto:** Los números deben tener 10 dígitos y empezar con 3 (ej: 300XXXXX25)")
     
     if valid_numbers:
         st.success(f"🎉 {len(valid_numbers)} números están listos para generar enlaces")
@@ -454,8 +454,8 @@ st.sidebar.markdown("""
 6. **Enviar Mensajes** - Usa los enlaces generados
 
 ### 📞 Formato de números:
-- ✅ Correcto: 3008686725
-- ❌ Incorrecto: 08686725, +573008686725
+- ✅ Correcto: 300XXXXX25
+- ❌ Incorrecto: 08686725, +57300XXXXX25
 
 ### 🔧 Variables de personalización:
 Usa el nombre de la columna entre llaves:

@@ -455,7 +455,7 @@ st.sidebar.markdown("""
 
 ### 📞 Formato de números:
 - ✅ Correcto: 300XXXXX25
-- ❌ Incorrecto: 08686725, +57300XXXXX25
+- ❌ Incorrecto: 08XXXX25, +57300XXXXX25
 
 ### 🔧 Variables de personalización:
 Usa el nombre de la columna entre llaves:
